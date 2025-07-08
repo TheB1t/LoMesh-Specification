@@ -1,15 +1,31 @@
 LoMesh Specification (Open Draft)                    Bit (pseudonym)
-Version: 1.0                                         July 2025
+Version: 1.1                                         July 2025
 Category: Experimental
 
            LoMesh: Minimal Stateless Mesh Transport Protocol
                         for Constrained Networks
 
-Status of This Document
+Status of This Memo
 
    This document is an open specification published for public examination,
-   implementation, and discussion. Distribution and modification of this memo
-   are permitted under the terms of the MIT License.
+   implementation, and discussion. It is intended as a basis for feedback,
+   refinement, and potential deployment in experimental or constrained mesh
+   environments.
+
+   The LoMesh protocol is presented in RFC-style format to ensure clarity,
+   reproducibility, and structured analysis. This memo does not constitute a
+   standard, nor does it imply consensus or endorsement from any governing body.
+
+   Readers are encouraged to critique, implement, extend, or reject this design
+   based on technical merit, applicability to real-world use cases, and practical
+   engineering constraints.
+
+   The protocol is not intended to replace IP or compete with existing mesh stacks,
+   but to explore alternative transport models under strict locality, autonomy,
+   and statelessness constraints.
+
+   Distribution and modification of this document are permitted under the terms of
+   the MIT License. All contributions, commentary, and forks are welcome.
 
 Copyright Notice
 
@@ -20,529 +36,840 @@ Copyright Notice
 
 Table of Contents
 
-1. Introduction ................................................. 2  
-2. Terminology .................................................. 3  
-3. Architecture Overview ........................................ 4  
-4. Node and Channel Model ....................................... 5  
-5. Addressing and Identifiers ................................... 6  
-6. Session Establishment (REQ/ACK) .............................. 7  
-7. Data Forwarding and Flow ..................................... 8  
-8. Commutation Table Logic ...................................... 9  
-9. Physical Channel Arbitration (Optional) ..................... 10  
-10. Security and Privacy Considerations ........................ 11  
-11. IANA Considerations ........................................ 12  
-12. References ................................................. 13  
-Appendix A. LoMesh Design Principles ........................... 14  
-Appendix B. Node Capabilities Advertising and Selection .........15
-Acknowledgments ................................................ 16  
-Author’s Address ............................................... 17
+1.  Introduction ................................................. 2  
+    1.1 Intended Audience ........................................ 2  
+    1.2 Design Scope and Non-Goals ............................... 3  
+2.  Architectural Model .......................................... 4  
+    2.1 Layer Separation Overview ................................ 4  
+    2.2 Physical Layer (L2) Model ................................ 5  
+    2.3 Logical Layer (L3) Model ................................. 6  
+3.  Terminology .................................................. 7  
+4.  Node and Channel Model ....................................... 8  
+    4.1 Physical Endpoints and Pipes ............................. 8  
+    4.2 PipeMap and Discovery .................................... 9  
+    4.3 PipeID and PhysicalNodeID Assignment .....................10  
+5.  Addressing and Identifiers .................................. 11  
+    5.1 PhysicalNodeID (L2) ..................................... 11  
+    5.2 PipeID (L2) ............................................. 12  
+    5.3 LogicalNodeID (L3) ...................................... 13  
+    5.4 CID (L3) ................................................ 14  
+    5.5 Identifier Summary Table ................................ 15  
+6.  Framing and Data Format ..................................... 16  
+    6.1 L2 Frame Structure ...................................... 16  
+    6.2 L3 Packet Structure ..................................... 17  
+    6.3 Frame Processing Rules .................................. 18  
+7.  Session Establishment and Teardown .......................... 19  
+    7.1 L3 REQ/ACK Handshake .................................... 19  
+    7.2 Commutation Table Logic ................................. 20  
+    7.3 Session Lifecycle and Invalidation ...................... 21  
+8.  Data Forwarding ............................................. 22  
+    8.1 Hop-Local Forwarding Rules .............................. 22  
+    8.2 CID Translation and State ............................... 23  
+9.  Physical Channel Arbitration (Optional) ..................... 24  
+10. Security and Privacy Considerations ......................... 25  
+11. IANA Considerations ......................................... 26  
+12. References .................................................. 27  
+
+Appendix A. LoMesh Design Principles ............................ 28  
+Appendix B. Implementation Guidelines ........................... 29  
+Appendix C. Protocol State Examples ............................. 30  
+Appendix D. Optional Node Capabilities (Informative) ............ 31  
+Appendix E. Error Handling and Diagnostics ...................... 32  
+Appendix F. Backward and Forward Compatibility .................. 33  
+Appendix G. Why LoMesh Instead of IP? (Position Statement) ...... 34  
+Appendix H. Throughput and Performance Considerations ........... 35  
+Appendix I. Security Posture and Attack Surface Minimization .... 36  
+Acknowledgments ................................................. 37  
+Author’s Address ................................................ 38  
 
 1.  Introduction
 
-   LoMesh is a stateless, minimalistic mesh transport protocol designed for
-   decentralized, resource-constrained, and heterogeneous environments.
-   It enables autonomous nodes to establish logical communication channels
-   (Chains) across arbitrary physical networks, without relying on global
-   addressing, centralized routing, or persistent network-wide state.
+   LoMesh is a pure stateless mesh transport protocol designed for
+   highly decentralized, infrastructure-less, and resource-constrained
+   environments. The protocol is built on explicit separation of
+   physical transport (Layer 2) and logical session management (Layer 3),
+   ensuring maximum robustness, minimal state retention, and strict
+   hop-local logic.
 
-   LoMesh separates physical connectivity (Pipes) from logical connections
-   (Chains) through strictly local, hop-by-hop commutation. Each node forwards
-   data based solely on local mapping tables, with no requirement for global
-   knowledge or topological awareness. The protocol is agnostic to physical
-   media and can be implemented over any bidirectional byte stream, including
-   serial links, wireless radios, and virtual tunnels.
+   LoMesh enables autonomous nodes to establish and maintain logical
+   communication channels (Chains) across arbitrary physical networks,
+   without relying on global addressing, centralized routing, or persistent
+   network-wide state. All forwarding and resource management are performed
+   strictly locally, with per-hop mapping tables and no global topological
+   knowledge.
 
-   Discovery and session establishment in LoMesh are achieved via a broadcast-
-   based request (REQ) mechanism and a unicast acknowledgment (ACK) path,
-   forming the foundation of logical channel (Chain) setup. Data transmission
-   follows the established Chain using only locally meaningful connection
-   identifiers (CID) and physical pipe identifiers (PipeID).
+   The protocol is agnostic to underlying physical media and can be
+   implemented atop any bidirectional byte stream, including serial links,
+   wireless radios, and virtual pipes. Session discovery and establishment
+   are realized via strictly local procedures and ephemeral identifiers.
 
-   LoMesh is suitable for autonomous peer-to-peer networks, intermittently
-   connected systems, or mesh overlays where minimalism, resilience, and
-   independence from legacy infrastructure are required. All forwarding and
-   state logic is strictly local; the protocol deliberately omits advanced
-   features such as global routing, discovery floods, or network-layer
-   addressing. Security, reliability, and higher-layer features are
-   intentionally left out of scope for the core specification and may be
-   layered above as needed.
+   LoMesh deliberately omits advanced features such as end-to-end
+   addressing, global routing, quality-of-service, or built-in security.
+   Such capabilities may be implemented, where necessary, as higher-layer
+   protocols or deployment-specific extensions, but are not part of the
+   core protocol.
 
-2.  Terminology
+1.1 Intended Audience
+
+   This specification is intended for engineers, implementers, and
+   researchers building decentralized mesh or peer-to-peer communication
+   systems, particularly those operating under resource or infrastructure
+   constraints.
+
+   LoMesh is relevant for:
+   - Embedded or low-power devices lacking traditional IP stacks;
+   - Ad-hoc or disaster-resilient mesh deployments;
+   - Mesh overlays on physical media without global addressing;
+   - Autonomous systems requiring hop-local transport abstractions.
+
+   This protocol is not designed for use in IP-routed networks, enterprise
+   backbones, or high-throughput managed mesh fabrics.
+
+1.2 Design Scope and Non-Goals
+
+   LoMesh is designed as a minimal mesh transport protocol for autonomous,
+   resource-constrained, and infrastructure-less environments. Its primary
+   goal is to enable decentralized, stateless forwarding across
+   heterogeneous physical media, with all routing and session logic
+   confined to local node state.
+
+   LoMesh is **not** intended to:
+   - Replace or interoperate with IP-based network stacks, including IPv4/IPv6.
+   - Provide global addressing, end-to-end routing, or topology discovery.
+   - Support quality-of-service (QoS), congestion control, or traffic prioritization.
+   - Ensure reliable delivery, ordering, or flow control beyond hop-local forwarding.
+   - Implement built-in security, authentication, or encryption mechanisms.
+   - Scale to large, high-throughput, or Internet-wide mesh deployments.
+   - Serve as a generic replacement for managed or backbone-centric networks.
+
+   These features are deliberately omitted to minimize protocol complexity,
+   resource usage, and implementation overhead. Advanced functionality such
+   as security, reliability, or path optimization is expected to be layered
+   above the core protocol or realized via deployment-specific extensions.
+
+2.  Architectural Model
+
+   LoMesh is architected on strict separation between the physical transport
+   layer (L2) and the logical session layer (L3). This layered model ensures
+   that all physical connectivity, addressing, and framing are isolated from
+   logical channel management, forwarding, and session state.
+
+   All routing and switching logic is strictly hop-local. Nodes do not
+   possess global topology, address, or route knowledge. Each node
+   maintains only local mapping tables to facilitate forwarding, resource
+   allocation, and session tracking.
+
+   Physical Layer (L2) is responsible for discovery of immediate neighbors,
+   management of physical Pipes, framing of raw data, and tracking of
+   directly connected PhysicalNodeIDs.
+
+   Logical Layer (L3) is responsible for establishment and maintenance of
+   logical sessions (Chains), identifier translation (CID), per-hop
+   forwarding, and teardown procedures. Each logical channel is realized as
+   a sequence of strictly hop-local mappings, maintained per-node.
+
+2.1 Layer Separation Overview
+
+   The LoMesh protocol is explicitly divided into two layers:
+
+   - **Physical Layer (L2):**  
+     Handles all aspects of physical connectivity, neighbor discovery,
+     Pipe (channel) management, L2 frame transmission, and local addressing
+     by PhysicalNodeID (PNID).
+
+   - **Logical Layer (L3):**  
+     Handles all aspects of logical channel (session) establishment,
+     REQ/ACK handshake, CID assignment, data packet translation, and
+     session teardown. Logical channels (Chains) traverse multiple Pipes
+     via per-hop Commutation Table entries.
+
+   Each layer maintains its own identifiers, mapping tables, and state.
+   No identifier or routing information is propagated between L2 and L3
+   except as required for session setup and forwarding.
+
+2.2 Physical Layer (L2) Model
+
+   The L2 model is built around the following abstractions:
+
+   - **PhysicalEndpoint:**  
+     A concrete hardware or virtual interface (e.g., UART port, radio channel,
+     socket, etc.) capable of bidirectional byte transport.
+
+   - **Pipe:**  
+     A unidirectional or bidirectional logical link established over a
+     PhysicalEndpoint to a directly connected neighbor.
+
+   - **PipeID:**  
+     A Node-local identifier assigned to each active Pipe.
+
+   - **PhysicalNodeID (PNID):**  
+     An identifier uniquely representing the neighbor node as observed
+     on the local Pipe.
+
+   - **PipeMap Table:**  
+     Node-local table associating each PipeID with its connected
+     PhysicalNodeID and the underlying PhysicalEndpoint.
+
+   - **Hello/Discovery Frame:**  
+     Periodic, non-forwarded L2 message containing the sender’s PNID, used
+     to populate and maintain the PipeMap.
+
+   The Physical Layer does not manage logical sessions, CIDs, or Chains.
+   It is responsible only for detecting, framing, and addressing
+   point-to-point neighbor links.
+
+2.3 Logical Layer (L3) Model
+
+   The L3 model provides logical connectivity and session management
+   independently of the underlying Pipes. It introduces:
+
+   - **LogicalNodeID:**  
+     An ephemeral or persistent identifier used only during logical
+     session setup (REQ/ACK). Not routed or propagated in data forwarding.
+
+   - **CID (Connection Identifier):**  
+     Node-local identifier for an active logical channel segment (Chain hop).
+
+   - **Commutation Table:**  
+     Per-node mapping table associating each (IngressPipeID, IngressCID)
+     tuple with an (EgressPipeID, EgressCID) tuple for data forwarding.
+
+   - **Endpoint Table:**  
+     Node-local structure mapping established logical sessions to their
+     corresponding local PipeID(s) and CID(s) for application access,
+     session management, and teardown.
+
+   - **Chain:**  
+     A logical end-to-end communication session realized as a hop-by-hop
+     sequence of per-node CID mappings. Each segment exists only as long
+     as the relevant PipeID and CID are valid on each hop.
+
+   The Logical Layer is responsible for:
+   - Session establishment and teardown (REQ/ACK handshake)
+   - CID translation and local session state
+   - Per-hop data forwarding and commutation
+   - Invalidating sessions if the underlying PipeID becomes unreachable
+
+   No global addressing, end-to-end route knowledge, or topology state
+   is maintained or propagated beyond each node’s local mapping tables.
+
+3.  Terminology
 
    The following terms are used throughout this document with specific meaning:
 
-   - **Node**: An autonomous device implementing the LoMesh protocol.
+   - **Node:**  
+     An autonomous device implementing the LoMesh protocol.
 
-   - **Pipe**: A bidirectional physical or logical communication channel
-     between two directly connected Nodes. The nature of a Pipe (wired, wireless,
-     virtual) is abstracted from the protocol logic.
+   - **PhysicalEndpoint:**  
+     A hardware or virtual interface capable of bidirectional byte transport
+     (e.g., UART, SPI, radio channel, network socket).
 
-   - **PipeID**: A locally unique identifier assigned by a Node to each of its
-     available Pipes. PipeID is not globally unique or externally visible.
+   - **Pipe:**  
+     A unidirectional or bidirectional logical channel connecting the local Node
+     to a directly connected neighbor over a PhysicalEndpoint.
 
-   - **PhysicalNodeID**: An identifier for a Node within the local context of a
-     Pipe or physical link. It may be derived from hardware, configuration, or
-     protocol negotiation, and has scope limited to the local Pipe.
+   - **PipeID:**  
+     A Node-local, implementation-defined identifier assigned to each active Pipe.
 
-   - **LogicalNodeID**: An abstract identifier for a Node, used only during
-     session establishment (REQ/ACK). LogicalNodeID may be ephemeral or
-     persistent, but is not used in data forwarding.
+   - **PhysicalNodeID (PNID):**  
+     An identifier for a Node as perceived via a given Pipe or PhysicalEndpoint.
+     May be derived from hardware, configuration, or negotiation, and is local
+     to the Pipe context.
 
-   - **CID (Connection Identifier)**: A Node-local identifier for an active
-     logical channel (Chain) established between two endpoints. CIDs are
-     unique only within the context of a Node and the lifetime of the Chain.
+   - **PipeMap Table:**  
+     A per-node mapping of PipeID to {PhysicalNodeID, PhysicalEndpoint},
+     created and maintained through periodic Hello/Discovery frames.
 
-   - **Chain**: A logical end-to-end communication session established between
-     two Nodes, traversing one or more Pipes via intermediate Nodes. Chains
-     are realized as a sequence of hop-local CID mappings.
+   - **LogicalNodeID:**  
+     An ephemeral or persistent abstract identifier used solely during session
+     setup (REQ/ACK handshake). Not propagated in data packets.
 
-   - **Commutation Table**: A Node-local table mapping incoming data flows
-     (identified by CID and PipeID) to outgoing flows (mapped to a possibly
-     different CID and PipeID). The Commutation Table enables hop-by-hop
-     forwarding without global path knowledge.
+   - **CID (Connection Identifier):**  
+     A Node-local, session-lifetime identifier for an active logical channel
+     segment (Chain hop). Assigned independently by each Node per session.
 
-   - **Endpoint Table**: A Node-local structure mapping remote Node
-     identifiers (LogicalNodeID or PhysicalNodeID) to ingress/egress pairs
-     (CID, PipeID), allowing a Node to associate external connections with
-     local state.
+   - **Chain:**  
+     A logical, end-to-end communication session between two application endpoints,
+     realized as a hop-by-hop sequence of CID and PipeID mappings via intermediate Nodes.
 
-   - **REQ (Request)**: A broadcast session initiation message sent by a Node
-     to discover and establish a logical Chain toward a target LogicalNodeID.
-     The REQ accumulates a reverse path as it propagates.
+   - **Commutation Table:**  
+     Node-local mapping table associating each inbound (PipeID, CID) to an
+     outbound (PipeID, CID) for data forwarding on active Chains.
 
-   - **ACK (Acknowledgment)**: A unicast message sent by the target Node in
-     response to a REQ, traversing the accumulated reverse path to confirm
-     and establish the Chain. The ACK enables Nodes along the path to allocate
-     local CIDs and build Commutation Table entries.
+   - **Endpoint Table:**  
+     Node-local structure mapping application-visible sessions (Chains) to the
+     corresponding local PipeID(s) and CID(s). Enables application access,
+     control, and teardown of logical sessions.
 
-   - **Suppression Table**: A temporary cache for deduplication of REQ messages
-     and suppression of redundant broadcasts during session establishment.
+   - **REQ (Request):**  
+     A broadcast L3 session initiation message (including initiator and target
+     LogicalNodeIDs) used to discover and establish a Chain.
 
-   - **Session**: The period between successful establishment of a Chain and
-     its explicit teardown, during which data can be exchanged via the
-     corresponding CIDs.
+   - **ACK (Acknowledgment):**  
+     A unicast L3 response to a REQ, retracing the discovered path in reverse
+     to confirm and establish the Chain with Node-local CIDs.
 
-   All identifiers are opaque and implementation-defined in length, format,
-   and encoding, except where scope or uniqueness is specified in this document.
+   - **Hello/Discovery Frame:**  
+     A non-forwarded L2 frame periodically sent on each PhysicalEndpoint
+     containing the sender’s PhysicalNodeID, used to populate and refresh
+     the PipeMap.
 
-3.  Architecture Overview
+   - **Suppression Table:**  
+     Temporary per-node cache for deduplication of REQ messages during session
+     setup and flood containment.
 
-   LoMesh enables autonomous Nodes to form a mesh network over arbitrary
-   physical or virtual media. The protocol architecture is designed around
-   strict separation of physical connectivity (Pipes) and logical sessions
-   (Chains), with all forwarding and control logic realized as hop-local state
-   machines. There is no concept of global addressing, global routing tables,
-   or persistent network topology knowledge.
-
-   Each Node maintains a set of Pipes, each identified by a local PipeID.
-   Pipes may correspond to point-to-point links, broadcast-capable media,
-   or virtual transports, but are always managed as local resources.
-
-   Logical communication between Nodes is established through Chains. A
-   Chain is a session built incrementally by propagating a REQ (Request)
-   message toward a target LogicalNodeID. The REQ accumulates the necessary
-   information for constructing the reverse path (e.g., ingress PipeIDs)
-   as it traverses the mesh. Upon reaching the destination, an ACK
-   (Acknowledgment) message is returned along the recorded path; each Node
-   allocates Node-local CIDs and builds the necessary Commutation Table
-   entries as the ACK traverses the path.
-
-   All data transfer in LoMesh occurs along established Chains, with each
-   hop translating local CIDs and PipeIDs per the Node's Commutation Table.
-   The protocol is fundamentally hop-by-hop: Nodes forward data based only
-   on local information, with no awareness or persistence of the global
-   network structure.
-
-   LoMesh is intentionally minimal: it provides no global discovery, no
-   address advertisement, no network-layer routing, and no built-in
-   encryption or authentication. Higher-layer features, such as directory
-   services, security, and reliability, are intended to be layered above
-   the core protocol.
-
-   The protocol supports both unidirectional and bidirectional Chains,
-   as explicitly requested during session establishment. The absence of
-   global state ensures robustness in dynamic, partitioned, or ephemeral
-   network environments, making LoMesh well suited for IoT, ad-hoc,
-   and autonomous mesh deployments.
+   All identifiers are Node-local and opaque in format except as required
+   by scope and uniqueness within their respective tables or lifetime.
 
 4.  Node and Channel Model
 
-   Each LoMesh Node is an independent agent responsible for managing local
-   Pipes, session establishment, forwarding, and state. The protocol requires
-   no fixed roles, centralized elements, or global configuration; all Nodes
-   are equivalent from a protocol perspective.
+   Each LoMesh Node operates as an autonomous agent responsible for managing
+   local Pipes, neighbor discovery, session establishment, data forwarding,
+   and session state. The protocol requires no fixed roles, centralized
+   elements, or global configuration; all Nodes are functionally equivalent.
 
-   **Pipes:**  
-   - A Pipe is a bidirectional communication channel, uniquely identified
-     by a PipeID within the Node.
-   - Pipes may be hardware interfaces (e.g., UART, SPI, CAN, RF, etc.),
-     logical transports (e.g., virtual TUN/TAP), or layered atop any medium
-     capable of transporting bytes bidirectionally.
-   - A Node may have any number of Pipes, each independently managed.
+4.1 Physical Endpoints and Pipes
 
-   **Chains:**  
-   - A Chain is a logical session constructed between two Nodes, possibly
-     traversing multiple intermediate Nodes and Pipes.
-   - Each Chain is realized as a sequence of hop-local mappings: at each Node,
-     a pair (or pair-set, for bidirectional Chains) of locally-allocated CIDs
-     corresponds to the ingress and egress Pipes for that session.
+   - **PhysicalEndpoint:**  
+     Each Node may possess one or more PhysicalEndpoints (hardware or virtual
+     interfaces). These endpoints enable bidirectional byte transmission and
+     reception with directly connected peers.
 
-   **Commutation Table:**  
-   - Each Node maintains a Commutation Table mapping inbound data flows
-     (identified by [PipeID, CID]) to outbound flows ([PipeID, CID]).
-   - The mapping is strictly local: CIDs are unique only within the Node,
-     and the association is valid only for the lifetime of the Chain.
-   - Bidirectional Chains are represented as two coordinated, but logically
-     independent, entries (one per direction).
+   - **Pipe:**  
+     A Pipe represents a logical channel to a neighbor Node established over
+     a PhysicalEndpoint. Each active Pipe is assigned a unique, Node-local
+     PipeID. Pipes may be unidirectional or bidirectional, subject to the
+     underlying transport's capabilities.
 
-   **Endpoint Table:**  
-   - Each endpoint Node (originator and target of the Chain) maintains an
-     Endpoint Table mapping the session with a remote Node to the associated
-     local PipeID and CIDs for ingress and egress.
-   - This allows applications or higher layers to interface with the
-     protocol via stable handles for each active session.
+4.2 PipeMap and Discovery
 
-   **Session Lifecycle:**  
-   - Chains are established through the REQ/ACK handshake (see Section 6).
-   - Data is forwarded hop-by-hop, using only local mappings.
-   - Sessions are torn down explicitly by teardown messages propagated along
-     the established Chain, or implicitly via local resource management.
+   - **PipeMap Table:**  
+     Each Node maintains a PipeMap, mapping each local PipeID to:
+        - The associated PhysicalNodeID (PNID) observed via discovery,
+        - The corresponding PhysicalEndpoint,
+        - (Optionally) additional link metadata (e.g., last seen time, link status).
 
-   **Node Autonomy:**  
-   - Each Node is free to accept or reject REQ, to limit session counts,
-     to arbitrate Pipe access, or to implement local policy. The protocol
-     requires no consensus or synchronization beyond what is needed for
-     per-hop state coordination.
+     Example PipeMap entry:
+     | PipeID | PhysicalNodeID | PhysicalEndpoint | Metadata   |
+     |--------|----------------|------------------|------------|
+     |  0x01  |     0xA1B2     |   /dev/ttyS1     |  ...       |
 
-   The Node and Channel Model in LoMesh is deliberately minimal, ensuring
-   protocol resilience, ease of implementation, and applicability to
-   constrained and heterogeneous environments.
+   - **Discovery via Hello/Discovery Frames:**  
+     Periodically, each Node broadcasts a Hello/Discovery frame on every
+     PhysicalEndpoint, containing its PhysicalNodeID. Neighbors that receive
+     such a frame update or populate their PipeMap accordingly, associating
+     the observed PNID with the receiving PipeID.
+
+   - **PipeID Lifetime:**  
+     PipeIDs are Node-local and ephemeral. If a PhysicalEndpoint or neighbor
+     disconnects and reconnects, the same PNID may appear with a different
+     PipeID. Nodes MUST treat PipeIDs as unstable across physical reattachment.
+
+4.3 PipeID and PhysicalNodeID Assignment
+
+   - **PipeID Assignment:**  
+     PipeIDs are allocated locally by each Node for every active Pipe. The
+     mapping between PipeID and PhysicalNodeID is established and maintained
+     solely via Hello/Discovery frames and is not globally visible.
+
+   - **PhysicalNodeID Assignment:**  
+     Each Node selects its PhysicalNodeID per interface or configuration.
+     The PNID MUST be unique at least within the physical link's collision
+     domain, but does not require global uniqueness.
+
+   - **Neighbor Table Maintenance:**  
+     Loss of Hello/Discovery frames or explicit link-down events MUST trigger
+     removal or invalidation of the associated PipeMap entry and all related
+     session state (CID, Chain) for that PipeID.
+
+   - **Physical Channel Constraints:**  
+     The protocol does not mandate any particular media or topology;
+     all Pipes and their associated PipeIDs are managed strictly as local
+     abstractions.
+
+   In summary, the Node and Channel Model in LoMesh is strictly local:
+   - No global addressing, neighbor discovery, or path advertisement.
+   - All physical connectivity is detected, tracked, and lost based solely
+     on local events at each Node and Pipe.
 
 5.  Addressing and Identifiers
 
    LoMesh employs strictly local, implementation-defined identifiers to
-   distinguish resources and establish session state. The protocol
-   separates identifiers by scope and function:
+   distinguish resources, manage sessions, and direct data flows. Each
+   identifier has well-defined scope, purpose, and lifetime. No identifier
+   is globally propagated or visible beyond the Node or session context in
+   which it is defined.
 
-   **PhysicalNodeID:**  
-   - Represents the physical or hardware identity of a Node as perceived
-     on a given Pipe.  
-   - Typically derived from device serial number, hardware MAC, or unique
-     configuration.  
-   - Its scope is limited to the local Pipe context and serves to uniquely
-     distinguish endpoints at the physical layer.
-   - Used during Pipe initialization, low-level diagnostics, or for
-     access control, but never in logical forwarding or session discovery.
+5.1 PhysicalNodeID (L2)
 
-   **PipeID:**  
-   - A Node-local identifier for each active Pipe.
-   - There is a bijective mapping between PipeID and PhysicalNodeID for all
-     directly connected neighbors: each PipeID corresponds to one PhysicalNodeID,
-     and vice versa, within the Node.
-   - PipeID is used in Commutation and Endpoint Tables to direct traffic
-     and manage session paths; it is not exposed beyond the local Node.
+   - **Definition:**  
+     The PhysicalNodeID (PNID) uniquely identifies a Node within the scope
+     of a physical link (Pipe). It is used in Hello/Discovery frames for
+     neighbor detection and PipeMap association.
 
-   **LogicalNodeID:**  
-   - An abstract identifier used solely during session setup (REQ/ACK) to
-     target, discover, or advertise a Node for logical connections.
-   - May be ephemeral (session-specific) or persistent (configured), but is
-     not required to be globally unique.
-   - After session establishment, LogicalNodeID does not appear in forwarded
-     packets.
+   - **Scope:**  
+     Pipe-local; valid only for the directly connected neighbor over the
+     associated PhysicalEndpoint.
 
-   **CID (Connection Identifier):**  
-   - A Node-local identifier for each logical flow (Chain) segment.
-   - Assigned independently by each Node as part of the REQ/ACK handshake.
-   - CIDs are valid only for the lifetime of the session and only within
-     the Node's context.
-   - Used to index Commutation Table and label data packets locally.
+   - **Assignment:**  
+     Chosen by the Node, via configuration, hardware, or negotiation. No
+     requirement for mesh- or network-wide uniqueness.
 
-   **Summary Table:**
+   - **Use:**  
+     Used exclusively at the Physical Layer (L2) for PipeMap association,
+     neighbor discovery, and link-level management. Not used for session
+     setup, forwarding, or logical addressing.
 
-   | Identifier      | Scope       | Lifetime     | Purpose                 |
-   |-----------------|------------ |------------- |-------------------------|
-   | PhysicalNodeID  | Pipe-local  | Hardware     | Pipe association, diag  |
-   | PipeID          | Node-local  | Node session | Data path selection     |
-   | LogicalNodeID   | Session     | REQ/ACK      | Discovery/targeting     |
-   | CID             | Node-local  | Session      | Data commutation        |
+5.2 PipeID (L2)
 
-   All identifiers are opaque; their format and length are implementation-
-   defined except where required by scope. No identifier is assumed globally
-   unique across the mesh. LoMesh does not define, require, or propagate
-   any form of network-wide addressing.
+   - **Definition:**  
+     A Node-local identifier assigned to each active Pipe. PipeIDs are
+     unique only within the context of the Node that allocates them.
 
-   The strong separation of physical, logical, and session identifiers
-   ensures LoMesh can function atop heterogeneous hardware, supports
-   robust privacy properties, and avoids global state complexity.
+   - **Scope:**  
+     Node-local; not visible to other Nodes.
 
-6.  Session Establishment (REQ/ACK)
+   - **Assignment:**  
+     Assigned and managed locally by each Node, typically at Pipe creation
+     or neighbor detection.
 
-   LoMesh establishes logical channels (Chains) between Nodes via a strictly
-   two-phase handshake: a broadcast Request (REQ) and a unicast Acknowledgment
-   (ACK). This mechanism enables decentralized discovery, explicit path setup,
-   and per-hop resource allocation, all without global routing or address
-   resolution.
+   - **Use:**  
+     Used to index the PipeMap, direct outgoing frames, and receive
+     incoming data from specific neighbors.
 
-   **Phase 1: REQ Propagation**
-   - A Node wishing to establish a Chain initiates a REQ message containing:
-       • The initiator's LogicalNodeID (ephemeral or persistent, as configured)
-       • The target LogicalNodeID
-       • A ChainType flag (e.g., bidirectional, unidirectional)
-       • An empty reverse path trace (a stack of ingress PipeIDs)
-   - The REQ is broadcast over all or selected Pipes. Each receiving Node:
-       • Checks for duplicate REQ using its Suppression Table (drops repeats)
-       • Appends the incoming PipeID to the reverse path trace
-       • Forwards the REQ further (broadcast or constrained flooding), subject
-         to scope/policy/TTL constraints
-   - The REQ accumulates a strictly ordered path back to the initiator, built
-     solely from the sequence of traversed PipeIDs.
+   - **Stability:**  
+     PipeIDs are ephemeral; reassignment or reallocation may occur when
+     PhysicalEndpoints or neighbors reconnect.
 
-   **Phase 2: ACK Return Path**
-   - Upon receiving a REQ matching its own LogicalNodeID, the target Node:
-       • Allocates one or two local CIDs (per direction requested)
-       • Creates a corresponding Endpoint Table entry
-       • Prepares an ACK message containing the assigned local CIDs and
-         the recorded reverse path trace
-   - The ACK is returned as a unicast, retracing the path in reverse order.
-     At each hop, the Node:
-       • Allocates its own local CID(s) for the session direction(s)
-       • Updates the ACK, replacing prior CIDs with its own
-       • Inserts commutation entries in its Commutation Table:
-           { inCID, inPipe } → { outCID, outPipe }
-         for each direction as required by ChainType
-   - The initiator, upon receiving the ACK, finalizes its Endpoint Table and
+5.3 LogicalNodeID (L3)
+
+   - **Definition:**  
+     An abstract identifier used solely during session establishment
+     (REQ/ACK handshake). It serves to designate the target of a logical
+     connection attempt.
+
+   - **Scope:**  
+     Session-lifetime; valid only during REQ/ACK propagation and not
+     included in forwarded data packets.
+
+   - **Assignment:**  
+     May be ephemeral (session-specific) or persistent (preconfigured),
+     but is not required to be unique beyond the session context.
+
+   - **Use:**  
+     Used to initiate, discover, or target a logical session during the
+     REQ/ACK handshake. Not present in established Chain data forwarding.
+
+5.4 CID (Connection Identifier, L3)
+
+   - **Definition:**  
+     A Node-local identifier assigned to each active logical session
+     segment (Chain hop) as part of the REQ/ACK handshake.
+
+   - **Scope:**  
+     Node-local and valid only for the lifetime of the corresponding
+     session (Chain segment).
+
+   - **Assignment:**  
+     Assigned independently by each Node for each direction (bidirectional
+     or unidirectional) as the ACK traverses the path.
+
+   - **Use:**  
+     Used in Commutation Table entries to map incoming data to outgoing
+     flows, and in Endpoint Table entries for local session management.
+
+   - **Stability:**  
+     CIDs are ephemeral; they exist only as long as the associated session
+     and underlying PipeID are valid.
+
+5.5 Identifier Summary Table
+
+   | Identifier      | Layer | Scope        | Lifetime         | Purpose                 |
+   |-----------------|-------|--------------|------------------|-------------------------|
+   | PhysicalNodeID  |  L2   | Pipe-local   | Physical         | Neighbor detection,     |
+   |                 |       |              | link lifetime    | PipeMap association     |
+   | PipeID          |  L2   | Node-local   | Node session     | Channel selection,      |
+   |                 |       |              | Pipe lifetime    | Data routing            |
+   | LogicalNodeID   |  L3   | Session      | REQ/ACK phase    | Session setup, targeting|
+   | CID             |  L3   | Node-local   | Session          | Data commutation,       |
+   |                 |       |              | Chain lifetime   | Endpoint management     |
+
+   All identifiers are opaque and implementation-defined except where scope
+   and uniqueness are specified. No identifier is required or assumed to
+   be unique across the mesh or network.
+
+   This strict separation and scoping of identifiers ensures robust local
+   management, prevents global complexity, and supports operation on
+   heterogeneous hardware and topologies.
+
+6.  Framing and Data Format
+
+   LoMesh explicitly separates physical (L2) and logical (L3) framing. Each
+   frame or packet includes only the minimum fields necessary for forwarding
+   and state management at its respective layer. No field is globally
+   interpreted or reused across layers.
+
+6.1 L2 Frame Structure
+
+   Every transmission over a Pipe (PhysicalEndpoint) is encapsulated in an L2
+   frame. The format is implementation-defined, but a typical minimal structure is:
+
+   | Field               | Size      | Purpose                                 |
+   |---------------------|-----------|-----------------------------------------|
+   | DstPhysicalNodeID   | N bytes   | Destination PNID (link-local)           |
+   | Type                | 1 byte    | Frame type (Data, Hello, Control, etc.) |
+   | Packet Priority     | 1 byte    | Optional QoS/Priority indicator         |
+   | Payload             | variable  | Layer 3 data or control content         |
+   | CRC                 | N bytes   | Frame integrity (checksum)              |
+
+   - **DstPhysicalNodeID:**  
+     Identifies the intended recipient on the local Pipe. Used for point-to-point
+     and selective broadcast at the link layer.
+
+   - **Type:**  
+     Indicates the nature of the frame (e.g., Data, Hello/Discovery, Teardown).
+     Allows Nodes to distinguish between regular data, control, or protocol frames.
+
+   - **Packet Priority:**  
+     Optional field to indicate relative transmission or processing priority.
+     May be omitted on low-end or FIFO media.
+
+   - **Payload:**  
+     Contains the encapsulated L3 packet or protocol content, or control data
+     specific to the L2 frame type.
+
+   - **CRC:**  
+     Frame-level error detection and integrity validation. Algorithm and length
+     are implementation-defined but MUST provide suitable protection for the
+     physical medium.
+
+   All L2 frames are interpreted, processed, and routed only on the local Node.
+   No L3 fields (such as CID or LogicalNodeID) are included or interpreted at L2.
+
+6.2 L3 Packet Structure
+
+   Logical Layer (L3) packets are encapsulated in L2 Payload fields. The typical
+   minimal L3 structure is:
+
+   | Field    | Size      | Purpose                            |
+   |----------|-----------|------------------------------------|
+   | CID      | N bytes   | Local session (Chain) identifier   |
+   | Payload  | variable  | Application or user data           |
+
+   - **CID:**  
+     The local Connection Identifier assigned by the Node for the active logical
+     session. Used to look up forwarding rules in the Commutation Table.
+
+   - **Payload:**  
+     User/application data or protocol-specific content for the logical session.
+
+   For session establishment or control messages (REQ/ACK, teardown), the L3
+   packet structure may include additional fields such as LogicalNodeID,
+   session flags, or path traces, as required by Section 7.
+
+6.3 Frame Processing Rules
+
+   - **L2 Processing:**  
+     Upon receipt, a Node inspects the DstPhysicalNodeID. Frames not addressed
+     to the local PNID (or broadcast) are discarded. Type and CRC are validated.
+     For Hello/Discovery frames, the PNID and PipeMap are updated. For Data or
+     protocol frames, the Payload is delivered to the L3 handler.
+
+   - **L3 Processing:**  
+     Upon receipt from L2, the Node inspects the CID field and consults the
+     Commutation Table. If an active session exists, the payload is forwarded
+     per Section 8. Otherwise, the packet is discarded or an error is reported.
+
+   - **Priority Handling:**  
+     If Packet Priority is implemented, higher-priority frames MAY be processed
+     or transmitted preferentially at L2. LoMesh does not mandate any
+     end-to-end QoS or fairness.
+
+   - **Error Handling:**  
+     Frames failing CRC, or addressed to unknown PNID, are discarded. Session or
+     control frames with invalid fields MUST be ignored.
+
+   This separation ensures that all frame and packet processing is strictly
+   local and layer-appropriate, minimizing protocol complexity and resource use.
+
+7.  Session Establishment and Teardown
+
+   Logical sessions (Chains) in LoMesh are established and managed strictly
+   at the Logical Layer (L3), using a hop-by-hop handshake (REQ/ACK) and
+   strictly local mapping tables. Session teardown and invalidation are
+   handled via explicit control messages or local Pipe state changes.
+
+7.1 L3 REQ/ACK Handshake
+
+   - **REQ (Request) Phase:**  
+     To initiate a logical session (Chain), a Node broadcasts a REQ message
+     over all relevant Pipes. The REQ includes:
+        • Initiator's LogicalNodeID (ephemeral or persistent)
+        • Target LogicalNodeID
+        • Optional ChainType flags (bidirectional/unidirectional)
+        • A reverse path trace (stack of ingress PipeIDs, updated at each hop)
+
+     Each Node receiving a REQ:
+        • Checks its Suppression Table for duplicates (drops repeats)
+        • Appends the ingress PipeID to the path trace
+        • Broadcasts the REQ onward, subject to policy or TTL
+        • May optionally apply local admission control or policy
+
+   - **ACK (Acknowledgment) Phase:**  
+     When the REQ reaches the target LogicalNodeID:
+        • The target allocates local CID(s) for the session direction(s)
+        • Records a new Endpoint Table entry
+        • Returns an ACK along the recorded reverse path
+
+     Each Node along the ACK path:
+        • Allocates its own local CID(s) for the session
+        • Updates the ACK with local CID(s)
+        • Installs new Commutation Table entries:
+            (IngressPipeID, IngressCID) → (EgressPipeID, EgressCID)
+        • Forwards the ACK to the next-hop in the reverse path
+
+     The initiator, upon receiving the ACK, finalizes its Endpoint Table and
      considers the Chain established.
 
-   **Properties:**
-   - Each hop's CID assignments are strictly local and do not leak upstream
-     or downstream.
-   - The reverse path trace is never stored beyond session setup; after ACK
-     completes, all routing is via commutation tables.
-   - Flooding of REQ is contained by Suppression Table, TTL, or policy.
-   - There is no broadcast at the data transmission phase; all forwarding is
-     unicast and table-driven.
-   - Session teardown is performed by propagating a teardown message along
-     the established Chain, removing the corresponding CIDs and table entries
-     at each hop.
+   - **Properties:**
+     • All CID assignments are Node-local and not visible to peers
+     • The reverse path trace is discarded after session setup
+     • There is no global address or route state
 
-   This handshake enables deterministic, directionally-explicit channel
-   setup, and forms the basis for all higher-layer interactions in LoMesh.
+7.2 Commutation Table Logic
 
-7.  Data Forwarding and Flow
+   - **Commutation Table:**  
+     Each Node maintains a mapping:
+        (IngressPipeID, IngressCID) → (EgressPipeID, EgressCID)
+     for each active Chain segment. For bidirectional Chains, two entries
+     are installed (one per direction).
 
-   Once a Chain is established via the REQ/ACK handshake, data transmission
-   proceeds in a strictly hop-by-hop manner. Each packet is forwarded
-   according to the Node's Commutation Table, which maps incoming
-   (PipeID, CID) pairs to outgoing (PipeID, CID) pairs for each active session.
+   - **Entry Lifecycle:**  
+     Entries are created during the ACK phase of session establishment and
+     removed on session teardown, Pipe loss, or local policy.
 
-   **Data Packet Handling:**
-   - A data packet received on a given Pipe, carrying a locally valid CID,
-     is looked up in the Commutation Table.
-   - If a matching entry exists:
-       • The Node rewrites the packet's CID as specified by the mapping.
-       • The packet is transmitted out the corresponding Pipe.
-   - If no matching entry is found, the packet is dropped silently or, at
-     the implementer's option, may trigger an error response.
+   - **Forwarding:**  
+     On receipt of a data packet (via L2), the Node looks up the (PipeID, CID)
+     in the Commutation Table. If an entry exists, the packet's CID is
+     translated as specified and forwarded out the mapped Pipe. If not, the
+     packet is dropped.
 
-   **CID Translation:**
-   - CIDs are strictly local to each Node; translation occurs at every hop.
-   - The data plane does not preserve or propagate source, destination,
-     or global identifiers—only local CIDs and PipeIDs.
-   - This design inherently limits information leakage and network-wide
-     traceability.
+   - **Endpoint Table:**  
+     Each session's local application state is managed via the Endpoint Table,
+     which associates:
+        • LogicalNodeID of the peer
+        • Local PipeID(s) and CID(s) in use
+        • Application-facing handles for send/receive operations
 
-   **Bidirectional and Unidirectional Flow:**
-   - For bidirectional Chains, two independent Commutation Table entries are
-     installed per direction, allowing independent translation of CIDs for
-     each data path.
-   - Unidirectional Chains require only a single entry, with data flow in
-     the established direction.
+   - **Suppression Table:**  
+     Temporary storage to deduplicate REQ messages and limit REQ flooding
+     during session setup.
 
-   **Session Integrity:**
-   - Data forwarding is stateless with respect to network topology or
-     path. All logic is embodied in the current Commutation Table entries.
-   - Chain liveness and error detection are out of scope for the core
-     protocol but may be layered above (e.g., via keepalives, timeouts).
+7.3 Session Lifecycle and Invalidation
 
-   **Teardown:**
-   - Session teardown is initiated by either endpoint, propagating a
-     teardown message along the established Chain. Each Node, upon
-     receiving such a message, removes the associated entries from its
-     Commutation and Endpoint Tables.
+   - **Session Teardown:**  
+     Teardown is initiated by either endpoint or by loss of an underlying Pipe.
+     A teardown control message is sent along the Chain, causing each Node
+     to remove relevant entries from its Commutation and Endpoint Tables.
 
-   **Summary:**
-   - Data forwarding in LoMesh is hop-local, table-driven, and blind to
-     global network state.
-   - There is no global addressing, routing, or packet traceability.
-   - The system is robust to topology changes, partitioning, and resource
-     constraints, as forwarding always depends only on the current Node's
-     local state.
+   - **Pipe Loss:**  
+     If a PipeID disappears (e.g., neighbor lost, link down), all sessions
+     (CIDs, Chains) associated with that PipeID are immediately invalidated
+     and removed from local tables.
 
-   This model enables deterministic, scalable mesh forwarding with minimal
-   per-node resource and protocol complexity.
+   - **CID Expiry:**  
+     CIDs are valid only as long as the session and PipeID exist. Session
+     expiration or resource reclamation triggers removal of the associated
+     entries.
 
-8.  Commutation Table Logic
+   - **Reconnection:**  
+     To re-establish a session after Pipe or neighbor loss, a new REQ/ACK
+     handshake must be initiated, resulting in new CID assignments and
+     Chain mappings.
 
-   The Commutation Table is the core structure enabling hop-by-hop
-   forwarding in LoMesh. It maintains strictly local state, mapping each
-   active session’s incoming flow (identified by PipeID and CID) to an
-   outgoing flow (PipeID and CID) as determined during session establishment.
+   This hop-local, explicit lifecycle management ensures robust operation
+   in dynamic, partitioned, or mobile mesh environments.
 
-   **Table Structure:**
-   - Each entry is uniquely indexed by an (IngressPipeID, IngressCID) tuple.
-   - Each entry specifies (EgressPipeID, EgressCID) for forwarding.
-   - For bidirectional Chains, separate entries are installed for each
-     direction, ensuring strict logical independence.
+8.  Data Forwarding
 
-   **Entry Lifecycle:**
-   - On session establishment (via ACK traversal), the Node allocates new
-     local CIDs and installs corresponding commutation entries.
-   - Each entry is valid only for the lifetime of its Chain segment; upon
-     session teardown or resource reclaim, entries are removed.
+   All data transmission in LoMesh is strictly hop-by-hop and table-driven,
+   based solely on the Node’s current Commutation Table. There is no concept
+   of global addressing, source/destination propagation, or persistent route
+   knowledge beyond each hop.
 
-   **Operation:**
-   - Upon receiving a data packet:
-       • The Node looks up the packet’s (PipeID, CID) in the table.
-       • If a match is found, the packet’s CID is rewritten as EgressCID and
-         forwarded through EgressPipeID.
-       • If no match is found, the packet is discarded or a local error may
-         be signaled.
-   - The table may be implemented as a hash, array, or other efficient
-     structure, depending on Node constraints and expected session counts.
+8.1 Hop-Local Forwarding Rules
 
-   **Bidirectionality and Asymmetry:**
-   - The protocol permits asymmetric Chains; the forward and reverse paths
-     may be established over different routes, PipeIDs, or even have
-     differing lifetimes.
+   - **Packet Reception:**  
+     On receiving an L2 frame with a Data type for its own PNID, the Node
+     extracts the L3 packet (containing CID and payload).
 
-   **No Global State:**
-   - The Commutation Table is strictly local; it does not contain or infer
-     any information about the overall network topology, global paths,
-     or remote Node state.
+   - **Lookup:**  
+     The Node looks up the tuple (IngressPipeID, CID) in its Commutation Table.
 
-   **Resource Management:**
-   - The number of concurrent sessions (Chains) and Commutation Table size
-     are limited only by local Node policy and resource availability.
-   - Nodes MAY evict or refuse new sessions if limits are reached; such
-     events are handled locally and need not be signaled to the network.
+   - **Translation and Forwarding:**  
+     If a matching entry exists:
+        • The Node rewrites the packet's CID to the mapped EgressCID
+        • Transmits the packet out the corresponding EgressPipeID, encapsulated in a new L2 frame
+        • Updates any local statistics or flow state as required
 
-   **Security Note:**
-   - All state is hop-local and ephemeral. No identifier or mapping persists
-     beyond session teardown, ensuring that stale routes or identifiers do
-     not leak or accumulate.
+   - **Drop:**  
+     If no entry exists, the packet is silently discarded, or (optionally)
+     an error may be signaled locally.
 
-   The Commutation Table embodies the LoMesh design philosophy: forwarding
-   and state are always local, minimal, and deterministic, regardless of
-   mesh scale or dynamism.
+   - **Directionality:**  
+     For bidirectional Chains, independent Commutation Table entries are
+     maintained and used per direction.
+
+   - **Isolation:**  
+     Data forwarding is entirely independent at each Node; no information
+     about the original initiator, global route, or remote Node IDs is retained
+     or propagated in the data plane.
+
+8.2 CID Translation and State
+
+   - **CID Handling:**  
+     At each hop, the CID is strictly local and remapped as the packet
+     traverses the Chain. No global or end-to-end CID is ever assigned or used.
+
+   - **State Validity:**  
+     Commutation Table entries (and thus data forwarding) are only valid as
+     long as both the PipeID and CID remain allocated. Loss of either
+     invalidates the mapping.
+
+   - **Application Interface:**  
+     Applications interact with logical sessions via handles provided by
+     the Endpoint Table, referencing local PipeID(s) and CID(s). Applications
+     are not exposed to remote identifiers or route details.
+
+   - **Resource Management:**  
+     Nodes may evict, reclaim, or refuse new sessions or forwarding entries
+     at any time, subject to resource constraints and local policy.
+
+   This model enables scalable, robust mesh forwarding, where all routing
+   and state logic remains minimal and strictly local.
 
 9.  Physical Channel Arbitration (Optional)
 
-   In deployments where Pipes correspond to shared or contention-based physical
-   media (e.g., wireless links, bus architectures), LoMesh supports an optional
-   arbitration mechanism to coordinate access and prevent collisions between
-   competing Nodes or protocol implementations.
+   In deployments where Pipes share a physical medium with contention
+   (e.g., wireless channels, bus architectures), LoMesh supports an optional
+   arbitration mechanism to coordinate access and prevent collisions among
+   competing Nodes or protocol instances.
 
-   **Applicability:**
-   - Arbitration is REQUIRED only for shared media where simultaneous transmissions
-     may interfere or collide.
-   - For point-to-point or inherently collision-free channels (e.g., direct serial
-     links, dedicated virtual tunnels), arbitration MAY be omitted if no conflict
-     can arise.
+   - **Applicability:**  
+     Arbitration is REQUIRED only for shared or contention-based media where
+     simultaneous transmissions may interfere or collide. For dedicated,
+     point-to-point, or inherently collision-free channels, arbitration MAY
+     be omitted entirely.
 
-   **Arbitration Model:**
-   - Arbitration is performed at the Pipe level, prior to transmission of LoMesh
-     protocol messages or data.
-   - A basic finite-state-machine (FSM) is used to coordinate access:
-       • Nodes signal intent to transmit using a SYNC message or equivalent.
-       • The channel is held during transmission (BEGIN), released upon completion
-         (END).
-       • If multiple Nodes contend for access, a backoff or randomized delay MAY
-         be employed to avoid repeated collisions.
-   - The specific signaling, timing, and contention resolution algorithms are
-     implementation-defined but MUST be interoperable across compliant LoMesh
-     Nodes sharing the same medium.
+   - **Arbitration Model:**  
+     Arbitration is performed at the Pipe (L2) level, prior to transmission
+     of any LoMesh protocol message or data frame.
 
-   **Arbitration State Transitions:**
-   - FREE: Channel is idle; any Node may initiate SYNC.
-   - CONTENDING: Multiple Nodes request access; contention resolution occurs.
-   - MASTER: Node holds channel and may transmit (BEGIN ... END).
-   - BACKOFF: Node defers after unsuccessful contention, reattempts after delay.
+     A minimal state-machine protocol may be used:
+        • Nodes signal intent to transmit using a SYNC or RESERVE frame.
+        • The medium is considered HELD during transmission (BEGIN...END).
+        • If multiple Nodes contend, randomized backoff or priority delay
+          mechanisms MAY be used to avoid repeated collisions.
 
-   **Interoperability:**
-   - All LoMesh implementations operating on a shared medium MUST implement the
-     same arbitration protocol if collisions are possible.
-   - The arbitration mechanism is logically independent of LoMesh session and
-     forwarding logic; it precedes protocol-level actions and does not alter
-     the structure of Chains or data packets.
+   - **State Transitions:**  
+     | State     | Description                              |
+     |-----------|------------------------------------------|
+     | FREE      | Medium idle; any Node may initiate SYNC  |
+     | CONTEND   | Multiple Nodes request access; contention|
+     | MASTER    | Node holds the channel; may transmit     |
+     | BACKOFF   | Node defers after unsuccessful contention|
 
-   **Omission:**
-   - In deployments with dedicated, collision-free Pipes, arbitration logic
-     MAY be omitted entirely, and Nodes may transmit freely.
+   - **Interoperability:**  
+     All LoMesh Nodes sharing a contention-based medium MUST implement the
+     same arbitration protocol and rules if collisions are possible.
 
-   Physical Channel Arbitration ensures LoMesh can operate robustly and fairly
-   across a wide range of physical media, including environments with high node
-   density or heterogeneous device capabilities.
+   - **Layer Independence:**  
+     Arbitration occurs strictly at L2 and does not alter, affect, or
+     require knowledge of L3 session state or forwarding logic.
+
+   - **Omission:**  
+     On dedicated links, arbitration logic MAY be omitted, and Nodes may
+     transmit at will.
+
+   Physical Channel Arbitration ensures robust, fair access to shared media,
+   particularly in dense, multi-node, or heterogeneous deployments. The
+   specific signaling, timing, and contention algorithms are implementation-
+   defined but MUST be interoperable for compliant Nodes on the same medium.
 
 10.  Security and Privacy Considerations
 
-   The core LoMesh protocol is deliberately minimal and does not provide
+   The core LoMesh protocol is intentionally minimal and does not provide
    built-in mechanisms for authentication, encryption, integrity verification,
-   or trust management. All protocol messages, including REQ, ACK, and data
-   packets, are forwarded in cleartext, and no security assumptions are made
-   about network participants or physical media.
+   or trust management. All protocol messages, including REQ, ACK, control,
+   and data packets, are forwarded in cleartext unless secured by the underlying
+   transport.
 
    **Security Properties:**
-   - **Locality of State:** CIDs, PipeIDs, and all routing state are strictly
-     Node-local, reducing the attack surface for global state poisoning,
-     replay, or remote injection.
-   - **No Global Addressing:** The absence of network-wide identifiers, address
-     advertisement, or route discovery precludes many traditional network-layer
-     attacks (e.g., ARP spoofing, route poisoning, network scanning).
-   - **Suppression Table for Flood Control:** The deduplication of REQ messages
-     via Suppression Table mitigates basic broadcast amplification or flooding
-     attacks during session setup.
+   - **Locality of State:**  
+     All identifiers (PipeID, CID), routing, and session state are strictly
+     Node-local, reducing the attack surface for network-wide attacks such as
+     global route poisoning or remote session hijacking.
+
+   - **No Global Addressing:**  
+     The absence of network-wide addresses, route advertisement, or discovery
+     mechanisms precludes many traditional network-layer attacks, such as ARP
+     spoofing or route poisoning.
+
+   - **REQ Suppression:**  
+     The Suppression Table for deduplication of REQ messages limits broadcast
+     amplification or basic flooding attacks during session setup.
 
    **Residual Risks:**
-   - **Eavesdropping:** All traffic is unencrypted and may be captured by
+   - **Eavesdropping:**  
+     All data and control traffic is unencrypted and may be intercepted by
      adversaries with access to the physical medium.
-   - **MITM/Impersonation:** Protocol does not authenticate Nodes or session
-     establishment, allowing malicious relays or MITM on open channels.
-   - **Resource Exhaustion:** An attacker may attempt to exhaust session state,
-     Commutation Table entries, or Suppression Table space by generating
-     excessive REQ or data flows.
-   - **Traffic Analysis/Tracking:** Repeated use of static LogicalNodeIDs or
-     observable patterns in Pipe usage may enable basic tracking or correlation.
+
+   - **Impersonation / MITM:**  
+     Protocol does not authenticate Nodes or session establishment; malicious
+     relays or impersonators can join the mesh and intercept or manipulate
+     traffic.
+
+   - **Resource Exhaustion:**  
+     Attackers may attempt to exhaust session state, Commutation Table space,
+     or Suppression Table entries by generating excessive REQ or data traffic.
+
+   - **Traffic Analysis:**  
+     Repeated use of static LogicalNodeIDs or observable Pipe usage patterns
+     may enable basic tracking or correlation by observers.
 
    **Recommended Mitigations (Out-of-Scope):**
-   - Implementations and deployments MAY layer cryptographic security above
-     LoMesh (e.g., end-to-end encryption, HMAC, mutual authentication).
-   - Ephemeral or randomized LogicalNodeIDs SHOULD be preferred for privacy.
-   - Per-Node rate limiting, resource allocation, and session quotas SHOULD
-     be applied to resist abuse.
-   - Sensitive applications SHOULD avoid exposing static Node IDs or cleartext
-     traffic over insecure media.
+   - Implementations MAY layer cryptographic security (encryption,
+     authentication, message integrity) above LoMesh at the application or
+     transport layer.
+   - Use of ephemeral or randomized LogicalNodeIDs is RECOMMENDED to limit
+     correlation and tracking.
+   - Deploy per-Node rate limiting, resource quotas, and admission control
+     to resist resource exhaustion.
+   - Sensitive applications SHOULD avoid cleartext traffic or exposure of
+     persistent identifiers on insecure media.
 
    **Privacy:**
-   - The protocol's design favors privacy by default: minimal metadata,
-     absence of global addressing, and hop-local state all reduce information
-     leakage.
-   - However, ultimate privacy depends on physical medium, upper-layer protocols,
-     and operational discipline.
+   - LoMesh design defaults to privacy by minimality: no global metadata,
+     persistent addresses, or hop-leakage in the data plane.
+   - However, ultimate privacy depends on physical media, upper-layer
+     protocols, and operational discipline.
 
-   Security and privacy are expected to be addressed by dedicated profiles,
-   extensions, or application-layer protocols layered atop LoMesh.
+   Security and privacy are expected to be addressed, where needed, by
+   dedicated deployment profiles, cryptographic overlays, or application-
+   specific extensions layered above LoMesh.
 
 11.  IANA Considerations
 
    This document does not require any IANA actions.
 
    No protocol numbers, message types, codepoints, or registries are defined
-   or requested by this specification. All identifiers and message formats
-   are implementation-defined and scoped locally to each Node or session.
+   or requested by this specification. All identifiers, frame formats, and
+   message fields are implementation-defined and scoped locally to each Node,
+   Pipe, or session.
 
-   Any future LoMesh extensions or protocol variants that require standardized
-   numbers, registries, or code assignments MUST define corresponding IANA
-   considerations in their respective specifications.
+   Any future extensions or protocol variants requiring standardized numbers,
+   registries, or code assignments MUST define corresponding IANA considerations
+   in their respective specifications.
 
 12.  References
 
@@ -555,111 +882,489 @@ Author’s Address ............................................... 17
    [LoMesh-Design]  LoMesh Design Principles, Appendix A, this document.
 
    [Additional references to be supplied as required by future LoMesh profiles
-    or extensions.]
+    or protocol extensions.]
 
 Appendix A.  LoMesh Design Principles
 
-   The following principles underpin the LoMesh protocol design:
+   The following principles underpin the LoMesh protocol architecture:
 
-     - Statelessness: No Node maintains global topology, routing, or neighbor
-       state. All forwarding and session logic is strictly local.
+   - **Layered Separation:**  
+     Physical (L2) and logical/session (L3) layers are strictly separated.
+     No identifier or state is propagated or reused across layers beyond
+     what is strictly necessary for session setup and forwarding.
 
-     - Locality: All identifiers, session state, and forwarding decisions are
-       Node-local and do not propagate beyond the immediate context.
+   - **Statelessness:**  
+     No Node maintains global topology, routing, or neighbor state beyond
+     immediate Pipes and locally active sessions. All forwarding and session
+     logic is strictly local.
 
-     - Minimalism: Protocol core is intentionally limited to essential
-       mechanisms—no address advertisement, route distribution, or global
-       metadata is included.
+   - **Minimalism:**  
+     Protocol core is intentionally limited to essential mechanisms—no global
+     address propagation, route advertisement, path optimization, or meta-
+     negotiation is included.
 
-     - Hardware Agnosticism: LoMesh is independent of physical and link-layer
-       technologies, and is defined only in terms of bidirectional byte
-       streams (Pipes).
+   - **Hardware Agnosticism:**  
+     LoMesh operates independently of any particular physical or link-layer
+     technology and is defined solely in terms of bidirectional byte streams
+     (Pipes).
 
-     - Determinism: Behavior of Nodes and session state transitions is fully
-       determined by the protocol and local state, enabling reproducible and
-       testable implementations.
+   - **Determinism:**  
+     Node behavior and all session state transitions are fully determined by
+     protocol rules and local state, enabling reproducible, auditable
+     implementations.
 
-     - Extensibility: All advanced features (reliability, encryption,
-       authentication, capability-based relay, etc.) are intended to be
-       layered above the core protocol or implemented via deployment-specific
-       profiles.
+   - **Robustness:**  
+     No state is global or irreplaceable. LoMesh remains operational in the
+     face of dynamic topologies, partial failures, mobility, or intermittent
+     links.
 
-     - Privacy-by-Design: Absence of global addresses, route discovery, and
-       persistent identifiers limits information leakage and tracking.
+   - **Extensibility:**  
+     Advanced features (reliability, encryption, authentication, capability-
+     based relay, etc.) are intended to be layered above the core protocol
+     or implemented via deployment-specific profiles and extensions.
 
-     - Robustness: LoMesh is inherently resilient to dynamic topologies,
-       partial failures, and heterogeneous deployment, as no state is global
-       or irreplaceable.
+   - **Privacy-by-Design:**  
+     Absence of global addresses, route discovery, and persistent identifiers
+     limits information leakage and tracking by adversaries or observers.
 
-   These principles are not normative but inform the protocol’s design,
-   rationale, and future extensions.
+   These principles are not normative but serve as guidance for implementers,
+   reviewers, and future protocol evolution.
 
-Appendix B.  Node Capabilities Advertising and Selection (Informative)
+Appendix B.  Implementation Guidelines
 
-   LoMesh enables, but does not require, the optional advertisement and
-   selection of Node capabilities. Capabilities are Node-local attributes
-   describing hardware, resource, or policy characteristics that may be
-   relevant for session setup, peer selection, or relay optimization in
-   heterogeneous mesh deployments.
+   This appendix provides practical guidance and recommendations for building
+   robust, interoperable, and resource-efficient LoMesh implementations.
 
-   **Definition of Capabilities:**
-   - A capability is any self-declared property of a Node or Pipe, such as:
-       • Available bandwidth, link quality, or latency class
-       • Power source (battery, mains, energy harvesting, etc.)
-       • Willingness to serve as a relay, backbone, or directory node
-       • Session quotas or admission policies
-       • Supported protocol extensions or physical media
-   - Capabilities are implementation-defined and not standardized by the
-     LoMesh core specification.
+   **1. Layer Separation:**
+   - Maintain strict modularity between L2 (physical/link) and L3 (logical/session)
+     code. Ensure that identifiers, state, and events are not leaked or reused
+     between layers except as specified in the protocol.
+   - Avoid embedding logical/session logic into L2 drivers or vice versa.
 
-   **Mechanisms for Advertisement:**
-   - Capability information MAY be exchanged during Pipe initialization,
-     via management frames, or in application-layer signaling.
-   - Mesh-wide or network-broadcast advertisement is NOT RECOMMENDED due to
-     flooding and privacy risks.
-   - Instead, capabilities SHOULD be shared with directly connected peers
-     or designated directory/relay Nodes.
-   - The format, encoding, and semantics of capabilities are out-of-scope
-     for this specification and are to be defined in deployment profiles or
-     higher-layer protocols.
+   **2. PipeMap and Discovery:**
+   - Implement regular Hello/Discovery frame transmission on each PhysicalEndpoint,
+     using randomized intervals to minimize synchronization artifacts.
+   - On receiving a Hello frame, update or refresh the corresponding PipeMap entry
+     with the observed PNID, PipeID, and PhysicalEndpoint.
+   - Track last-seen timestamps or link quality indicators to identify stale or
+     failing Pipes. Remove PipeMap entries if Hello frames are not received within
+     a configurable timeout.
 
-   **Usage in Session Setup:**
-   - Initiators MAY use known or observed capabilities to influence peer
-     selection, relay choice, or path construction during session establishment
-     (REQ/ACK).
-   - Directory or relay Nodes MAY aggregate, cache, or provide capability
-     lookup services, subject to local policy.
+   **3. PipeID and PhysicalNodeID Management:**
+   - Allocate PipeIDs dynamically as neighbors or PhysicalEndpoints become available.
+   - Be aware that PipeID assignments may change if devices are unplugged,
+     reattached, or network topology changes. Always validate PNID-to-PipeID
+     associations before forwarding.
 
-   **Security and Privacy Considerations:**
-   - Nodes SHOULD avoid advertising sensitive or fingerprintable information
-     unless required for interoperability.
-   - Capability exchange SHOULD be subject to local access policy and MAY
-     be obfuscated, randomized, or limited to trusted counterparts.
-   - No authentication, verification, or attestation mechanism for capabilities
-     is defined in LoMesh core; deployments requiring integrity MUST provide
-     their own means.
+   **4. Frame Validation and Processing:**
+   - Rigorously validate all incoming frames for correct destination PNID, Type,
+     CRC, and structure before further processing.
+   - Discard frames with unknown or invalid fields, or which fail CRC checks.
 
-   **Interoperability:**
-   - Capability-based selection, path optimization, or relay preference are
-     OPTIONAL features, and LoMesh interoperability does not depend on
-     capability exchange.
-   - Nodes MAY choose to ignore or disregard peer capabilities as appropriate
-     to their operational model.
+   **5. Suppression Table Use:**
+   - Employ a time- or size-limited Suppression Table to deduplicate REQ messages
+     and prevent excessive broadcast flooding during session setup. Tune table
+     parameters for target deployment constraints.
 
-   The capability concept enables LoMesh deployments to adapt to heterogeneous
-   resources and policies without compromising the protocol’s minimal core.
-   All such mechanisms are OPTIONAL and outside the strict requirements of
-   LoMesh interoperability.
+   **6. CID and Session State:**
+   - Manage CIDs and Commutation Table entries with strict lifetime constraints.
+     Remove all state immediately on Pipe loss, session teardown, or resource
+     exhaustion.
+   - Use Endpoint Table handles to provide applications with stable interfaces
+     for send/receive, but do not expose remote Node identifiers.
+
+   **7. Resource Management:**
+   - Impose explicit limits on the number of active Pipes, CIDs, and session state
+     entries to protect against exhaustion. Consider per-peer or global quotas.
+   - Reject new sessions or tear down inactive ones as needed to maintain resource
+     availability.
+
+   **8. Security Considerations:**
+   - Where confidentiality, integrity, or authentication are required, implement
+     cryptographic protections above LoMesh at the application or session layer.
+   - Avoid using static LogicalNodeIDs or persistent identifiers unless necessary
+     for interoperability.
+
+   **9. Debugging and Diagnostics:**
+   - Log all Pipe, session, and error events for audit and troubleshooting.
+   - Provide means to inspect current PipeMap, Endpoint Table, and Commutation Table
+     state in runtime or via management interfaces.
+
+   **10. Interoperability:**
+   - Strictly follow field formats, handshake procedures, and frame/packet rules as
+     specified in this document to ensure cross-vendor compatibility.
+   - Where implementation-defined fields are used (e.g., Packet Priority, CRC length),
+     document and expose parameters for interoperability testing.
+
+   **11. Performance Optimization:**
+   - For embedded or low-power devices, optimize table lookups (PipeMap, Commutation,
+     Suppression) using hashes or compact structures.
+   - Batch or defer Hello frames to reduce wakeups in battery-powered designs.
+
+   **12. Extensibility:**
+   - New protocol features, options, or profiles SHOULD be layered above the LoMesh
+     core, and MUST NOT break core state, handshake, or forwarding invariants.
+
+   These guidelines are not exhaustive but reflect best practices for robust and
+   future-proof LoMesh deployments in real-world environments.
+
+Appendix C.  Protocol State Examples
+
+   This appendix illustrates typical state tables and flows in a minimal LoMesh deployment.
+   Examples are non-normative and provided to clarify protocol operation.
+
+   **1. Example: PipeMap Table**
+
+   | PipeID | PhysicalNodeID | PhysicalEndpoint  | LastSeen   |
+   |--------|----------------|------------------|------------|
+   |  0x01  |     0xA1B2     |   /dev/ttyS1     | 23:55:01   |
+   |  0x02  |     0xC3D4     |   rf0            | 23:55:04   |
+
+   - Populated by periodic Hello/Discovery frames.
+   - Stale entries are removed if LastSeen is too old.
+
+   **2. Example: Commutation Table (L3 Forwarding State)**
+
+   | IngressPipeID | IngressCID | EgressPipeID | EgressCID |
+   |---------------|------------|--------------|-----------|
+   |     0x01      |   0x0A     |    0x02      |   0x1F    |
+   |     0x02      |   0x0B     |    0x01      |   0x1E    |
+
+   - Created during ACK phase of session setup.
+   - Removed on session teardown or Pipe loss.
+
+   **3. Example: Endpoint Table (Application Session Mapping)**
+
+   | SessionHandle | LogicalNodeID | PipeID | CID   | Direction  |
+   |---------------|--------------|--------|-------|------------|
+   |      7        |   0xBEEF     | 0x01   | 0x0A  |  send      |
+   |      7        |   0xBEEF     | 0x02   | 0x0B  |  recv      |
+
+   - Associates user/application handle with current CIDs and PipeIDs.
+
+   **4. Example: Session Setup Sequence**
+
+   1. Node A wants to establish a session with LogicalNodeID = 0xBEEF.
+   2. Node A broadcasts REQ over all Pipes with target 0xBEEF.
+   3. Intermediate Nodes receive, deduplicate (Suppression Table), forward REQ, appending PipeIDs to path.
+   4. Node D (target) matches LogicalNodeID, allocates local CIDs, creates Endpoint Table entry, sends ACK back.
+   5. Each Node along path allocates local CIDs, updates Commutation Table, and forwards ACK to next hop.
+   6. Node A receives ACK, finalizes local state, session is established.
+
+   **5. Example: Session Teardown and Pipe Loss**
+
+   - If Node B detects loss of PipeID 0x02, it:
+     - Removes PipeMap entry for 0x02
+     - Invalidates all Commutation Table and Endpoint Table entries using 0x02
+     - Notifies applications of closed sessions
+
+   These examples are simplified for clarity. Actual state and field names
+   may vary by implementation.
+
+Appendix D.  Optional Node Capabilities (Informative)
+
+   This appendix outlines the concept of Node Capabilities as an optional,
+   implementation-defined extension for LoMesh deployments. Capabilities are
+   **not** part of the mandatory protocol core and must be used with care to
+   avoid breaking interoperability and minimalism.
+
+   **1. Purpose:**
+   - Capabilities allow Nodes to advertise local attributes, resources,
+     or operational constraints to directly connected neighbors.
+   - May be used to inform peer selection, session admission, or path
+     optimization in heterogeneous networks.
+
+   **2. Example Capabilities:**
+   - Available bandwidth or link quality
+   - Supported physical media or protocols
+   - Power source or energy constraints (e.g., battery, mains)
+   - Willingness to act as a relay, directory, or backbone Node
+   - Session quotas, buffer availability, or admission policies
+   - Supported protocol extensions or security features
+
+   **3. Propagation Mechanisms:**
+   - Capability data may be exchanged:
+     - During initial Hello/Discovery frame exchange (as additional fields)
+     - In explicit management frames/messages between neighbors
+     - At application/session layer, outside core LoMesh operation
+
+   - Mesh-wide or network-wide broadcast of capabilities is **not recommended**
+     due to privacy, scalability, and flood-control considerations.
+
+   **4. Security and Privacy Considerations:**
+   - Nodes should avoid advertising sensitive, fingerprintable, or security-
+     relevant information unless necessary for operation.
+   - Capability information should be authenticated, obfuscated, or limited to
+     trusted peers if used in sensitive deployments.
+   - No authentication or verification mechanism for capabilities is defined
+     in LoMesh; deployments requiring integrity must provide their own means.
+
+   **5. Interoperability:**
+   - Capability exchange and interpretation are entirely optional.
+   - Core LoMesh interoperability must not depend on capability negotiation or
+     exchange. Nodes unable or unwilling to process capabilities must continue
+     to function normally.
+   - Where critical features or optimizations require capability awareness,
+     deployers should coordinate explicit compatibility or fallback profiles.
+
+   These guidelines allow advanced LoMesh deployments to leverage capabilities
+   where needed, while preserving the minimal and robust nature of the protocol core.
+
+Appendix E.  Error Handling and Diagnostics
+
+   This appendix describes recommended practices for error detection, handling,
+   and diagnostics in LoMesh implementations.
+
+   **1. Frame and Packet Errors:**
+   - L2 frames failing CRC or addressed to unknown PNID MUST be silently discarded.
+   - L3 packets with invalid structure, unknown or expired CID, or protocol
+     violations MUST be discarded. Optionally, error counters may be incremented.
+
+   **2. Session Errors:**
+   - If a Node receives data for a session with no valid Commutation Table entry,
+     the packet is dropped. Optionally, the session may be flagged for audit.
+   - On session teardown, lost Pipe, or resource exhaustion, all affected sessions
+     and state MUST be invalidated immediately.
+
+   **3. Application Notifications:**
+   - Applications SHOULD be notified of session teardown, Pipe loss, or unrecoverable
+     errors affecting active handles (Endpoint Table entries).
+   - Provide diagnostic interfaces for querying error counters, PipeMap status,
+     and session statistics.
+
+   **4. Logging and Audit:**
+   - Log key events: Pipe creation/removal, session setup/teardown, frame errors,
+     and unexpected protocol states.
+   - Support optional debug or trace modes for field engineers.
+
+   **5. Error Extensions:**
+   - Error reporting and signaling extensions (e.g., explicit NAK, diagnostic
+     frames) may be implemented above the core, but MUST NOT affect forwarding
+     or session state of compliant minimal Nodes.
+
+Appendix F.  Backward and Forward Compatibility
+
+   This appendix outlines considerations and guidelines for protocol evolution,
+   versioning, and compatibility in LoMesh deployments.
+
+   **1. Versioning:**
+   - The protocol core described herein is versioned (see document Version field).
+   - Any incompatible changes to frame formats, handshake procedures, or identifier
+     semantics require incrementing the protocol version.
+
+   **2. Extension Fields:**
+   - Optional or future fields SHOULD use reserved Type codes, TLV (Type-Length-Value)
+     structures, or other extensible encodings to enable future expansion without
+     breaking backward compatibility.
+
+   **3. Capability Negotiation:**
+   - When deploying new features, advertise capabilities (see Appendix D) and use
+     negotiation or fallback for older Nodes.
+
+   **4. Strict Compliance:**
+   - All core forwarding, session, and identifier logic MUST remain stable to
+     preserve interoperability.
+   - Nodes encountering unknown frame types, extension fields, or unrecognized
+     capabilities MUST ignore or safely skip them, not fail or crash.
+
+   **5. Deprecation:**
+   - Deprecated fields or procedures SHOULD be clearly documented. Nodes MAY
+     support both old and new behaviors during a transition period.
+
+   **6. Documentation:**
+   - Extensions or protocol variants requiring new codepoints or registry actions
+     MUST document IANA considerations and version requirements.
+
+   Adhering to these principles allows LoMesh to evolve without fragmenting
+   interoperability or minimalism.
+
+Appendix G.  Why LoMesh Instead of IP? (Position Statement)
+
+   The Internet Protocol (IP) suite is the foundation of the modern Internet,
+   providing global interoperability, robust security profiles, and a mature
+   infrastructure for a vast range of applications and environments. It excels
+   in scenarios requiring global routability, stable addressing, and tight
+   integration with existing networks and services.
+
+   **LoMesh is not intended to replace IP, but to complement it in use cases
+   where the design assumptions of the classic IP stack—centralized routing,
+   persistent global addresses, and stateful discovery—are impractical or
+   unnecessary.**
+
+   LoMesh targets environments such as:
+   - Embedded and low-power devices unable to support the full IP stack.
+   - Decentralized, ad-hoc, or infrastructure-less mesh networks.
+   - Dynamic, partitioned, or mobile topologies where persistent global state
+     cannot be maintained.
+   - Scenarios prioritizing local autonomy, minimal state, and operational
+     simplicity over global interoperability.
+
+   | Criteria         | Classic IP Stack         | LoMesh                         |
+   |------------------|-------------------------|--------------------------------|
+   | Addressing       | Global, hierarchical    | Local, hop-specific            |
+   | State            | Persistent, distributed | Minimal, hop-local             |
+   | Discovery        | ARP, DHCP, NDP          | Hello frames, PipeMap          |
+   | Routing          | Centralized, table-driven| Hop-by-hop, no global route   |
+   | Security         | Built-in, mature        | Out-of-scope; profile-based    |
+   | Scaling          | BGP, NAT, CIDR          | Overlay, emergent, policy      |
+   | Resilience       | Infra-dependent         | Infra-independent              |
+
+   **LoMesh enables:**
+   - Stateless, local forwarding without the burden of global address
+     management or route maintenance.
+   - Maximum architectural flexibility for experimental, opportunistic, or
+     temporary mesh deployments.
+   - Extensibility for security, optimization, or overlay features without
+     altering the protocol core.
+
+   **Limitations:**
+   - LoMesh does not provide global routability, standardized security profiles,
+     or the rich feature set of the IP stack.
+   - It is not intended for use in managed enterprise, datacenter, or
+     high-throughput environments.
+
+   **Conclusion:**
+   LoMesh and IP serve different purposes. LoMesh complements IP where its
+   minimalism, statelessness, and local autonomy address operational needs that
+   the traditional Internet architecture was not designed to solve. Each protocol
+   has its place in the engineer's toolkit; selection should be guided by actual
+   deployment requirements.
+
+Appendix H.  Throughput and Performance Considerations
+
+   This appendix summarizes factors influencing throughput and performance in
+   LoMesh deployments, and provides guidance for implementers and network
+   designers.
+
+   **1. Physical Layer Dependency:**
+   - LoMesh is agnostic to the underlying PHY. Maximum achievable throughput is
+     fundamentally limited by the capabilities and configuration of the selected
+     physical medium (e.g., UART, CAN, RF, Ethernet).
+   - Typical examples:
+     - LoRaWAN: < 50 kbps (depending on SF, BW, coding rate)
+     - IEEE 802.15.4 (ZigBee, Thread): ~250 kbps
+     - Bluetooth Low Energy: < 1 Mbps (practically less)
+     - CAN: 125 kbps to 1 Mbps
+     - UART: up to several Mbps (hardware and cable dependent)
+     - Ethernet: 10 Mbps to 10 Gbps and above
+
+   **2. Protocol Overhead:**
+   - Each LoMesh frame adds overhead for headers (L2 + L3 fields: PNID, PipeID, CID, CRC, etc.).
+   - Session establishment via REQ/ACK introduces temporary control traffic, which
+     can impact available bandwidth during mesh discovery or reconnection storms.
+   - In relay scenarios (multi-hop), throughput is reduced proportionally to the number
+     of hops and per-hop processing delay.
+
+   **3. Forwarding and Table Lookups:**
+   - Per-packet forwarding in LoMesh is efficient (single table lookup and CID rewrite),
+     but resource-constrained devices should optimize Commutation Table, PipeMap, and
+     Suppression Table access to minimize latency.
+
+   **4. Flood Control and REQ Storms:**
+   - Excessive or poorly controlled REQ flooding can saturate links, especially in
+     dense or large meshes. Suppression Table and conservative REQ TTL are essential.
+
+   **5. Hop Count and End-to-End Latency:**
+   - End-to-end throughput decreases with each additional hop due to per-hop
+     buffering, queuing, and retransmission delays (if any).
+   - For critical applications, limit hop counts and monitor latency budgets.
+
+   **6. Application Layer Implications:**
+   - LoMesh provides no built-in flow/congestion control or fragmentation; these must
+     be implemented at a higher layer if required for reliable or bulk transfers.
+   - Throughput and latency-sensitive applications may require overlay or profile
+     extensions (e.g., priority fields, batch forwarding).
+
+   **7. Practical Recommendations:**
+   - Choose the highest feasible PHY for the use case and optimize MAC settings
+     (e.g., packet size, inter-frame spacing).
+   - Limit mesh diameter and manage session churn to avoid bottlenecks.
+   - Profile and test under real-world loads; monitor table utilization and
+     session state exhaustion.
+
+   **Summary Table: Example PHY Throughput**
+
+   | PHY            | Typical Max Data Rate | Practical Use Notes               |
+   |----------------|----------------------|-----------------------------------|
+   | LoRa (SF12)    | < 1 kbps             | High latency, low duty cycle      |
+   | LoRa (SF7)     | ~ 20 kbps            | Short range, lower reliability    |
+   | ZigBee         | 250 kbps             | Mesh overhead significant         |
+   | BLE            | < 1 Mbps              | Practical ~100-200 kbps mesh      |
+   | CAN            | 125 kbps–1 Mbps      | Deterministic, low mesh scale     |
+   | UART           | Up to several Mbps   | Cable, hardware dependent         |
+   | Ethernet       | 10 Mbps–10 Gbps+     | Bottleneck — not LoMesh           |
+
+   The above table and guidance are non-normative; actual throughput and performance
+   will vary according to deployment, node hardware, protocol extensions, and
+   application-layer behavior.
+
+Appendix I.  Security Posture and Attack Surface Minimization
+
+   This appendix outlines the fundamental architectural reasons why LoMesh
+   inherently reduces or eliminates most classic Layer 2/Layer 3 security threats,
+   and explains the protocol’s focus on application-level (L4+) protection.
+
+   **1. No Global Address Space**
+   - LoMesh does not assign or propagate global node addresses. All identifiers
+     (PipeID, PhysicalNodeID, CID, LogicalNodeID) are strictly local and
+     ephemeral.
+   - There is no ARP, DHCP, or broadcast-based discovery, so common attacks
+     like ARP spoofing, MAC flooding, or broadcast storms are simply inapplicable.
+
+   **2. No Persistent or Discoverable Routing State**
+   - All routing and forwarding state (Commutation Table) is node-local and
+     session-specific, not globally visible or queryable.
+   - A compromised node cannot infer the full path or map the network via
+     standard data-plane packets.
+
+   **3. Hop-Local Forwarding and Stateless Data Plane**
+   - Every data frame is valid only at a single hop. Packet fields (CID, PipeID)
+     lose their meaning at the next node.
+   - Replay, man-in-the-middle, or session-hijack attacks are infeasible unless
+     an attacker compromises every node along the path in real time.
+
+   **4. No Global Broadcast or Multicast**
+   - The protocol does not rely on any form of network-wide broadcast or
+     multicast; session setup REQs are limited by TTL and deduplication
+     (Suppression Table).
+   - Large-scale DoS or reflection attacks via flooding are naturally limited.
+
+   **5. Security by Isolation and Minimalism**
+   - The absence of global identifiers, broadcast, and persistent state
+     provides an intrinsic level of isolation.
+   - Attackers cannot “scan” the mesh for live nodes or open sessions as in
+     traditional MAC/IP networks.
+
+   **6. Optional and Layered Security**
+   - End-to-end cryptographic security (encryption, authentication, integrity)
+     is expected to be implemented at the application or session layer (L4+).
+   - If required, hop-by-hop or neighbor-level security profiles can be layered
+     above the core protocol without burdening all deployments.
+
+   **7. Limitations and Attack Vectors**
+   - If a node or Pipe is physically compromised, local traffic may be observed,
+     but only within the scope and lifetime of that session or neighbor link.
+   - Suppression Table and session resource exhaustion (local DoS) remain
+     possible, but are limited in scope and mitigated by quotas and policy.
+
+   **Conclusion:**
+   LoMesh minimizes the attack surface by architectural design, not by adding
+   cryptographic complexity at L2/L3. Its security model assumes that trust and
+   confidentiality are best enforced at the endpoints (L4+), leaving the transport
+   as simple, auditable, and resilient as possible. This model is well-suited for
+   embedded, resource-constrained, and infrastructure-less environments where
+   classic networking threats are less relevant, and protocol simplicity and
+   operational transparency are paramount.
 
 Acknowledgments
 
-   The author acknowledges community input, architectural critique, and
-   implementation insights provided by contributors and reviewers.
-   Special thanks to all those who tested and challenged the minimalism,
-   resilience, and practical viability of LoMesh.
+   The author acknowledges valuable input, critique, and review from the
+   LoMesh development and research community. Special thanks to all early
+   implementers, embedded engineers, and practitioners who tested,
+   challenged, and validated the protocol’s minimalism and robustness.
 
-   This work is inspired by the traditions of protocol minimalism,
-   distributed systems, and peer-to-peer mesh network research.
+   This work draws inspiration from the traditions of open protocol design,
+   distributed systems research, and the peer-to-peer networking community.
 
 Author’s Address
 
